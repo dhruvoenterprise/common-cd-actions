@@ -66,7 +66,7 @@ jobs:
 
       - name: Unmount shared drive
         run: |
-          echo "🧹 Cleaning up..."
+          echo " Cleaning up..."
           net use Z: /delete
 
       - name: Log - End Time
