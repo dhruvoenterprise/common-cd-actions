@@ -1,0 +1,74 @@
+name: Reusable CD Deployment
+
+on:
+  workflow_call:
+    inputs:
+      artifact_name:
+        required: true
+        type: string
+      artifactory_path:
+        required: true
+        type: string
+      share_path:
+        required: true
+        type: string
+      share_user:
+        required: true
+        type: string
+      share_password:
+        required: true
+        type: string
+    secrets:
+      jfrog_user:
+        required: true
+      jfrog_password:
+        required: true
+      jfrog_url:
+        required: true
+
+jobs:
+  deploy:
+    runs-on: windows-latest
+
+    steps:
+      - name: Set up JFrog CLI
+        uses: jfrog/setup-jfrog-cli@v3
+
+      - name: Log - Start Time
+        run: |
+          echo " Start Time: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+
+      - name: Configure JFrog CLI
+        run: |
+          echo " Configuring JFrog CLI..."
+          jfrog config add myserver `
+            --url="${{ secrets.jfrog_url }}" `
+            --user="${{ secrets.jfrog_user }}" `
+            --password="${{ secrets.jfrog_password }}" `
+            --interactive=false
+
+      - name: Download artifact from Artifactory
+        run: |
+          echo " Downloading ${{ inputs.artifact_name }} from ${{ inputs.artifactory_path }}"
+          jfrog rt dl "${{ inputs.artifactory_path }}/${{ inputs.artifact_name }}" --server-id=myserver
+          echo " File downloaded to: $(Resolve-Path ${{ inputs.artifact_name }})"
+
+      - name: Mount shared drive
+        run: |
+          echo " Mounting shared drive Z: ..."
+          net use Z: "${{ inputs.share_path }}" /user:${{ inputs.share_user }} ${{ inputs.share_password }}
+
+      - name: Copy artifact to shared drive
+        run: |
+          echo " Copying to Z:\ ..."
+          copy "${{ inputs.artifact_name }}" Z:\
+          echo " Copy completed."
+
+      - name: Unmount shared drive
+        run: |
+          echo "🧹 Cleaning up..."
+          net use Z: /delete
+
+      - name: Log - End Time
+        run: |
+          echo " End Time: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
