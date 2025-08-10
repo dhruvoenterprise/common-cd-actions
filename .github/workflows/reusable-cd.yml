@@ -1,4 +1,4 @@
-name: Reusable CD Deployment
+name: Reusable CD Workflow
 
 on:
   workflow_call:
@@ -12,55 +12,67 @@ on:
       share_path:
         required: true
         type: string
-      share_user:
-        required: true
-        type: string
-      share_password:
-        required: true
-        type: string
       environment:
         required: false
         type: string
         default: 'stage'
     secrets:
-      jfrog_user:
+      jfrog_url:
+        required: true
+      jfrog_username:
         required: true
       jfrog_password:
         required: true
-      jfrog_url:
+      share_user:
+        required: true
+      share_password:
         required: true
 
 jobs:
   deploy:
     runs-on: windows-latest
+    # Link this job to GitHub Environment for approvals & env-specific secrets
+    environment: ${{ inputs.environment }}
+
     steps:
-      - name: Log deployment environment
-        run: echo "🚀 Deploying to environment: ${{ inputs.environment }}"
+      - name: Log deployment info
+        run: |
+          echo "Starting deployment..."
+          echo "Artifact: ${{ inputs.artifact_name }}"
+          echo "Artifactory Path: ${{ inputs.artifactory_path }}"
+          echo "Environment: ${{ inputs.environment }}"
 
       - name: Set up JFrog CLI
         uses: jfrog/setup-jfrog-cli@v3
+        with:
+          version: latest
 
       - name: Configure JFrog CLI
         run: |
-          jfrog config add myserver `
-            --url="${{ secrets.jfrog_url }}" `
-            --user="${{ secrets.jfrog_user }}" `
-            --password="${{ secrets.jfrog_password }}" `
+          jfrog config add cd-server \
+            --url="${{ secrets.jfrog_url }}" \
+            --user="${{ secrets.jfrog_username }}" \
+            --password="${{ secrets.jfrog_password }}" \
             --interactive=false
 
-      - name: Download artifact from Artifactory
+      - name: Download artifact from JFrog
         run: |
-          jfrog rt dl "${{ inputs.artifactory_path }}/${{ inputs.artifact_name }}" --server-id=myserver
-          echo "✅ File downloaded: ${{ inputs.artifact_name }}"
+          jfrog rt dl "${{ inputs.artifactory_path }}/${{ inputs.artifact_name }}" "."
+          if (-Not (Test-Path "${{ inputs.artifact_name }}")) {
+            Write-Error "Artifact not found after download"
+            exit 1
+          }
 
-      - name: Mount shared drive
+      - name: Mount SMB Share
         run: |
-          net use Z: "${{ inputs.share_path }}" /user:${{ inputs.share_user }} ${{ inputs.share_password }}
+          net use Z: "${{ inputs.share_path }}" /user:${{ secrets.share_user }} "${{ secrets.share_password }}"
 
-      - name: Copy artifact to shared drive
+      - name: Copy artifact to share (atomic copy)
         run: |
-          copy "${{ inputs.artifact_name }}" Z:\
+          $tempFile = "Z:\\${{ inputs.artifact_name }}.part"
+          Copy-Item "${{ inputs.artifact_name }}" $tempFile -Force
+          Rename-Item $tempFile "Z:\\${{ inputs.artifact_name }}" -Force
 
-      - name: Unmount shared drive
-        run: |
-          net use Z: /delete
+      - name: Unmount SMB Share
+        if: always()
+        run: net use Z: /delete /y
